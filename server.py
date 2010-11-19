@@ -3,10 +3,22 @@ from BaseHTTPServer import BaseHTTPRequestHandler,HTTPServer
 from avmap import to_avmap, from_avmap, AVDict, AVObject
 import os
 import random
+from ConfigParser import SafeConfigParser
+
+import json
+
+import threading
+import dbus
+import dbus.service
+import gobject
+
+mainloop = gobject.MainLoop()
+gobject.threads_init()
+
+from dbus.mainloop.glib import DBusGMainLoop
+DBusGMainLoop(set_as_default=True)
 
 random.seed()
-
-ROOT = ["/home/arosenfeld/Videos", "/home/arosenfeld/Packages"]
 
 class Item(AVObject):
     def __init__(self, filename):
@@ -88,7 +100,38 @@ class PathItem(AVObject):
     
 class Config(object):
     def __init__(self):
-        self.root = ROOT
+        self.config_parser = SafeConfigParser()
+        self.config_file = os.path.expanduser('~/.config/airvideo.cfg')
+        self.load()
+        
+    def load(self):
+        self.config = {"folders":[os.path.expanduser("~/Videos")]}
+        if os.path.exists(self.config_file):
+            with open(self.config_file, "r") as config_file:
+                self.config.update(json.load(config_file))
+
+    def save(self):
+        with open(self.config_file, 'wb') as config_file:
+            json.dump(self.config, config_file, sort_keys=True, indent=4)
+            
+    def get(self, name):
+        return self.config[name]
+        
+    def set(self, name, value):
+        self.config[name] = value
+        self.save()
+            
+    def get_folders(self):
+        return self.get('folders')
+        
+    def add_folder(self, path):
+        self.get('folders').append(path)
+        self.save()
+        
+    def remove_folder(self, path):
+        if path in self.get('folders'):
+            del self.get('folders')[path]
+            self.save()
 
 class browseService(object):
     def __init__(self, config):
@@ -98,7 +141,7 @@ class browseService(object):
 
     def getItems(self, browseRequest = None):
         if not browseRequest['folderId']:
-            for root in self.config.root:
+            for root in self.config.get('folders'):
                 if root not in self.roots:
                     root_folder = DiskRootFolder(filename=root)
                     self.items[root_folder.itemId] = root_folder
@@ -127,7 +170,7 @@ class browseService(object):
         return items
 
     def getItems2(self, params):
-        files = os.listdir(self.config.root)
+        files = os.listdir(self.config.get_config('folders'))
         items = []
         for f in files:
             if os.path.isdir(f):
@@ -139,11 +182,9 @@ class browseService(object):
     def getPathItems(self, params):
         items = [PathItem(itemId=None, type_=0, name='tauron')]
         return items
-        
-config = Config()
-services = {'browseService': browseService(config)}
 
 class Server(BaseHTTPRequestHandler):
+
     def do_GET(self):
         self.send_response(404, 'What are you doing here?')
         
@@ -152,7 +193,7 @@ class Server(BaseHTTPRequestHandler):
         print "Request: %s" % request
         response = AVDict("air.connect.Response")
         try:
-            service = services[request['serviceName']]
+            service = self.services[request['serviceName']]
             method = getattr(service, request['methodName'])
         except AttributeError:
             self.send_response(404, "Service not found")
@@ -172,14 +213,52 @@ class Server(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(to_avmap(response))
 
-    @staticmethod
-    def serve_forever(port):
+class ServerThread(threading.Thread):
+    def __init__(self, config, services):
+        threading.Thread.__init__(self)
+        self.config = config
+        self.services = services
+
+    def run(self):
         try:
-            server = HTTPServer(('', port), Server)
-            server.serve_forever()
+            self.server = HTTPServer(('', 45632), Server)
+            self.server.config = self.config
+            self.server.services = self.services
+            self.server.serve_forever()
         except KeyboardInterrupt:
-            print "Shutting down..."
-            server.shutdown()
+            self.kill()
+    
+    def kill(self):
+        print "Shutting down server..."
+        self.server.shutdown()
+        
+class AirVideoServer(dbus.service.Object):
+    def __init__(self, config):
+        dbus.service.Object.__init__(self, dbus.SessionBus(), "/Server")
+        self.config = config
+
+    @dbus.service.method(dbus_interface='com.airvideo.ServerInterface',
+                         in_signature='s', out_signature='v')
+    def getConfig(self, name):
+        return self.config.get(name)
+    
+    @dbus.service.method(dbus_interface='com.airvideo.ServerInterface',
+                         in_signature='sv', out_signature='')
+    def setConfig(self, name, value):
+        return self.config.set(name, value)
 
 if __name__ == "__main__":
-    Server.serve_forever(45632)
+    config = Config()
+    services = {'browseService': browseService(config)}
+    
+    session_bus = dbus.SessionBus()
+    name = dbus.service.BusName("com.airvideo.Server", session_bus)
+    
+    AirVideoServer(config)
+    
+    server = ServerThread(config, services)
+    server.start()
+    try:
+        mainloop.run()
+    except KeyboardInterrupt:
+        server.kill()

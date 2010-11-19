@@ -64,7 +64,10 @@ def print_and_return(obj, ident, debug):
         print " "*2*ident + "%s" % obj
     return obj
 
-def from_avmap(stream, ident=0, debug=False):
+def loads(string):
+    return loads(StringIO.StringIO(string))
+
+def load(stream, ident=0, debug=False):
     if isinstance(stream, basestring):
         stream = StringIO.StringIO(stream)
     id_ = read_and_unpack("c", stream)[0]
@@ -106,7 +109,10 @@ def from_avmap(stream, ident=0, debug=False):
     else:
         raise Exception("Invalid id: %s" % id_)
 
-def to_avmap(obj, counter = 0):
+def dump(obj, fp):
+    dp.write(dumps(obj))
+
+def dumps(obj, counter = 0):
     if isinstance(obj, list):
         #letter = (self.is_a? AirVideo::AvMap::BitrateList) ? "e" : "a"
         data = join(*[to_avmap(v) for v in obj])
@@ -136,23 +142,18 @@ def to_avmap(obj, counter = 0):
         raise Exception("Invalid object: %s" % obj)
 
 if __name__ == "__main__":
-    class B(object):
-        pass
-    class A(B):
-        items = [{'Teste':1}]
-        
+
     root = "data"
     if os.path.exists(root):
         for n in os.listdir(root):
             print n
             with open(os.path.join(root, n)) as f:
-                print from_avmap(f.read(), debug=True)
+                print dumps(f.read(), debug=True)
 
-    test_avmap = lambda obj: from_avmap(to_avmap(obj)) == obj
+    test_avmap = lambda obj: loads(dumps(obj)) == obj
     assert test_avmap(None)
     assert test_avmap(1)
     assert test_avmap("A string")
     assert test_avmap([1, 2, 3])
-    to_avmap(A())
     
     #obj = AVDict("Teste", {"v1":1,"v3":[1, 2, 3, "Teste", [4, 5], AVDict("Teste2", {"1":3})]})

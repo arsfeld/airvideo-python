@@ -1,11 +1,12 @@
 #!/usr/bin/env python
-from BaseHTTPServer import BaseHTTPRequestHandler,HTTPServer  
-from avmap import to_avmap, from_avmap, AVDict, AVObject
 import os
 import random
-from ConfigParser import SafeConfigParser
-
 import json
+import avmap
+
+from BaseHTTPServer import BaseHTTPRequestHandler,HTTPServer
+from ConfigParser import SafeConfigParser
+from avmap import AVDict, AVObject
 
 random.seed()
 
@@ -45,6 +46,7 @@ class VideoItem(Item):
     
 def cmp_items(x, y):
     if type(x) == type(y):
+        #TODO: Use filename comparison instead of cmp
         return cmp(x._filename.lower(), y._filename.lower())
     else:
         if isinstance(x, VideoItem):
@@ -178,7 +180,7 @@ class Server(BaseHTTPRequestHandler):
         self.send_response(404, 'What are you doing here?')
         
     def do_POST(self):
-        request = from_avmap(self.rfile)
+        request = avmap.load(self.rfile)
         print "Request: %s" % request
         response = AVDict("air.connect.Response")
         try:
@@ -200,7 +202,7 @@ class Server(BaseHTTPRequestHandler):
             raise
         print "Response: %s" % response
         self.end_headers()
-        self.wfile.write(to_avmap(response))
+        avmap.dump(response, self.wfile)
 
 class ServerThread(threading.Thread):
     def __init__(self, config, services):

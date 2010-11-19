@@ -1,3 +1,4 @@
+import os
 from struct import pack, unpack, calcsize
 
 try:
@@ -11,8 +12,43 @@ class AVDict(dict):
         self.update(v)
         
     def __str__(self):
-        return "<AVDict, name: %s, items: '%s'>" % (self.name, 
-            ','.join([('%s: %s' % (k, v)) for k, v in self.iteritems()]))
+        return "<AVDict, name: %s, items: {%s}>" % (self.name, 
+            ', '.join([('%s: %s' % (k, v)) for k, v in self.iteritems()]))
+    
+    def __repr__(self):
+        return self.__str__()
+        
+class AVObject(object):
+    __namespace__="air.video"
+    
+    def __init__(self, **kwargs):
+        for k, v in kwargs.iteritems():
+            setattr(self, k, v)
+
+    def to_avdict(self):
+        # An object is simply a dict full with it's attributes set to each
+        # attribute of the object
+        d = AVDict('.'.join([self.__namespace__, type(self).__name__]))
+        for attr in dir(self):
+            # Do not include hidden attributes
+            if attr.startswith("_"):
+                continue
+            v = getattr(self, attr)
+            # Do not include functions
+            if callable(v):
+                continue
+            # Strip leading underscore (so we can use reserved words as 
+            # attributes)
+            if attr.endswith("_"):
+                attr = attr[:-1]
+            d[attr] = v
+        return d
+        
+    def __str__(self):
+        return str(self.to_avdict())
+        
+    def __repr__(self):
+        return repr(self.to_avdict())
         
 read_and_unpack = lambda f, o: unpack(f, o.read(calcsize(f)))
 
@@ -23,35 +59,50 @@ def get_name(cls):
     import inspect
     return '.'.join(reversed([kls.__name__ for kls in inspect.getmro(cls)][:-1]))
 
-def from_avmap(stream):
+def print_and_return(obj, ident, debug):
+    if debug:
+        print " "*2*ident + "%s" % obj
+    return obj
+
+def from_avmap(stream, ident=0, debug=False):
     if isinstance(stream, basestring):
         stream = StringIO.StringIO(stream)
     id_ = read_and_unpack("c", stream)[0]
+    d = lambda data, s=ident: print_and_return(data, s, debug)
     if id_ == "a":
+        d("List [")
         c, n = read_and_unpack("!LL", stream)
-        return [from_avmap(stream) for i in range(n)]
+        items = [from_avmap(stream, ident+1, debug) for i in range(n)]
+        d("]")
+        return items
     elif id_ == "o":
         c, name_length = read_and_unpack("!LL", stream)
         name = stream.read(name_length)
         version, n = read_and_unpack("!LL", stream)
         values = {}
+        d("Dict (%s) {" % name)
         for i in range(n):
-            key_length = read_and_unpack("!L", stream)[0]
+            key_length = read_and_unpack("!L", stream)[0]            
             key = stream.read(key_length)
-            values[key] = from_avmap(stream)
+            d("%s:" % key, ident+1)
+            values[key] = from_avmap(stream, ident+2, debug)
+        d("}")
         return AVDict(name, values)
     elif id_ == "x":
         c, length = read_and_unpack("!LL", stream)
+        d('<data, size: %s>' % length)
         return StringIO.StringIO(stream.read(length))
     elif id_ == "s":
         c, length = read_and_unpack("!LL", stream)
-        return str(stream.read(length))
+        return d(str(stream.read(length)))
     elif id_ == "n":
-        return None
-    elif id_ == "i":
-        return read_and_unpack("!L", stream)[0]
+        return d(None)
+    elif id_ == "i" or id_ == "r":
+        return d(read_and_unpack("!L", stream)[0])
+    elif id_ == "l":
+        return d(read_and_unpack("!q", stream)[0])
     elif id_ == "f":
-        return read_and_unpack("!f", stream)[0]
+        return d(read_and_unpack("!d", stream)[0])
     else:
         raise Exception("Invalid id: %s" % id_)
 
@@ -60,6 +111,8 @@ def to_avmap(obj, counter = 0):
         #letter = (self.is_a? AirVideo::AvMap::BitrateList) ? "e" : "a"
         data = join(*[to_avmap(v) for v in obj])
         return join(pack("!cLL", 'a', counter, len(obj)), data)
+    elif isinstance(obj, bool):
+        return (to_avmap(int(obj)))
     elif isinstance(obj, AVDict):
         #if name == "air.video.ConversionRequest": version = 221
         version = 1
@@ -76,23 +129,24 @@ def to_avmap(obj, counter = 0):
     elif isinstance(obj, int):
         return pack("!cL", 'i', obj)
     elif isinstance(obj, float):
-        return pack("!cf", 'f', obj)
+        return pack("!cd", 'f', obj)
+    elif hasattr(obj, 'to_avdict'):
+        return to_avmap(obj.to_avdict())
     else:
-        d = AVDict(get_name(obj.__class__))
-        for attr in dir(obj):
-            if attr.startswith("_"):
-                continue
-            v = getattr(obj, attr)
-            if callable(v):
-                continue
-            d[attr] = v
-        return to_avmap(d)
+        raise Exception("Invalid object: %s" % obj)
 
 if __name__ == "__main__":
     class B(object):
         pass
     class A(B):
         items = [{'Teste':1}]
+        
+    root = "data"
+    if os.path.exists(root):
+        for n in os.listdir(root):
+            print n
+            with open(os.path.join(root, n)) as f:
+                print from_avmap(f.read(), debug=True)
 
     test_avmap = lambda obj: from_avmap(to_avmap(obj)) == obj
     assert test_avmap(None)

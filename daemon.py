@@ -3,27 +3,27 @@ import dbus
 import dbus.service
 import gobject
 
-import HttpServer
+import server
+
+from dbus.mainloop.glib import DBusGMainLoop
+
+DBusGMainLoop(set_as_default=True)
 
 mainloop = gobject.MainLoop()
 gobject.threads_init()
 
-from dbus.mainloop.glib import DBusGMainLoop
-DBusGMainLoop(set_as_default=True)
-
 class AirVideoServer(dbus.service.Object):
-    def __init__(self, config):
+    def __init__(self):
         dbus.service.Object.__init__(self, dbus.SessionBus(), "/Server")
-        self.config = HttpServer.Config()
-        self.services = {'browseService': httpServer.browseService(config)}
-
+        self.config = server.Config()
+        
     def run(self):
-        server = HttpServer.ServerThread(config, services)
-        server.start()
+        server_thread = server.ServerThread(self.config)
+        server_thread.start()
         try:
             mainloop.run()
         except KeyboardInterrupt:
-            server.kill()
+            server_thread.kill()
 
     @dbus.service.method(dbus_interface='com.airvideo.Server',
                          in_signature='s', out_signature='v')

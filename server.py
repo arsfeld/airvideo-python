@@ -9,7 +9,12 @@ import re
 import random
 import json
 
-import cherrypy
+cherrypy_available = False
+try:
+    import cherrypy
+    cherrypy_available = True
+except:
+    pass
 from gzip import GzipFile
 from wsgiref.simple_server import make_server
 #from flup.server.fcgi import WSGIServer
@@ -332,6 +337,12 @@ services = {'browseService': browse_service,
             'playbackService': playbackService}
 
 def process_request(request, outfile = None):
+    '''Generic request handler for /service
+    
+    request: avmap structure (from avmap.load)
+    outfile: file-like object to write the response (if None, a string will be
+        the return value with the response) 
+    '''
     fakefile = outfile is None
     if fakefile:
         outfile = StringIO.StringIO()
@@ -360,6 +371,7 @@ def process_request(request, outfile = None):
         return outfile.getvalue()
 
 class Server(BaseHTTPRequestHandler):
+    '''Request handler from the generic HTTPServer'''
     def do_GET(self):
         self.send_response(404, 'What are you doing here?')
         
@@ -373,35 +385,64 @@ class Server(BaseHTTPRequestHandler):
         outfile.close()
 
 class ThreadedHTTPServer(SocketServer.ThreadingMixIn, HTTPServer):
-    pass
+    '''Generic HTTPServer handler (does not use wsgi or anything)'''
+    @classmethod
+    def run(cls):
+        cls.server = ThreadedHTTPServer(('', 45632), Server)
+        cls.server.serve_forever()
+        
+    @classmethod
+    def shutdown(cls):
+        cls.server.shutdown()
 
-
-def wsgi_server(self, environ, start_response):
-    start_response('200 OK', [('Content-type', 'avmap')])
-    request = avmap.load(environ['wsgi.input'])
-    return process_request(request)
-
-class CherryPyServer:
-    @cherrypy.expose
-    def service(self, data):
-        request = avmap.load(data)
+class WsgiServer:
+    '''Server using the wsgi handler (will be used if cherrypy is not available'''
+    def serve(self, environ, start_response):
+        start_response('200 OK', [('Content-type', 'avmap')])
+        request = avmap.load(environ['wsgi.input'])
         return process_request(request)
         
+    @classmethod
+    def run(cls):
+        app = WsgiServer()
+        cls.server = make_server('', 45632, app.serve)
+        cls.server.serve_forever()
+        
+    @classmethod
+    def shutdown(cls):
+        cls.server.shutdown()
+
+if cherrypy_available:
+    class CherryPyServer:
+        '''CherryPy based server'''
+        @cherrypy.expose
+        def service(self, data):
+            request = avmap.load(data)
+            return process_request(request)
+            
+        @classmethod
+        def run(cls):
+            cherrypy.server.socket_port = 45632
+            cherrypy.server.socket_host = '0.0.0.0'
+            cherrypy.quickstart(CherryPyServer())
+        
+        @classmethod
+        def shutdown(cls):
+            pass
+        
 class ServerThread(threading.Thread):
+    '''Runs a web server in a thread.
+    
+    Chooses from an available server and calls the static run method'''
     def run(self):
         try:
             media.loader().start()
-            
-            #app = wsgi_server
-            #server = make_server('', 45632, app)
-            #server.serve_forever()
-
-            #cherrypy.server.socket_port = 45632
-            #cherrypy.server.socket_host = '0.0.0.0'
-            #cherrypy.quickstart(CherryPyServer())
-            
-            self.server = ThreadedHTTPServer(('', 45632), Server)
-            self.server.serve_forever()
+            if cherrypy_available:
+                self.server = CherryPyServer
+            else:
+                self.server = WsgiServer
+            #self.server = ThreadedHTTPServer
+            self.server.run()
         except KeyboardInterrupt:
             self.kill()
     
@@ -411,10 +452,16 @@ class ServerThread(threading.Thread):
         media.loader().kill()
         
 def run():
+    '''Create and run a server thread'''
     server_thread = ServerThread()
     server_thread.setDaemon(True)
     server_thread.start()
     return server_thread
     
 if __name__ == "__main__":
-    run().join()
+    try:
+        server = run()
+        while server.is_alive():
+            server.join(1.0)
+    except KeyboardInterrupt:
+        server.kill()

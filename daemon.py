@@ -2,10 +2,9 @@ import threading
 import dbus
 import dbus.service
 import gobject
+from dbus.mainloop.glib import DBusGMainLoop
 
 import server
-
-from dbus.mainloop.glib import DBusGMainLoop
 
 DBusGMainLoop(set_as_default=True)
 

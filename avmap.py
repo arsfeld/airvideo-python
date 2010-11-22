@@ -2,6 +2,7 @@ import os
 from struct import pack, unpack, calcsize
 from shutil import copyfileobj
 from UserDict import UserDict
+import struct
 
 try:
     import cStringIO as StringIO
@@ -82,7 +83,7 @@ def load(stream):
 def _load(stream, ident=0):
     id_ = read_and_unpack("c", stream)[0]
     d = lambda data, s=ident: print_and_return(data, s)
-    if id_ == "a" or id_ == "e":
+    if id_ == "a" or id_ == "e" or id_ == "d":
         d("List [")
         c, n = read_and_unpack("!LL", stream)
         items = [_load(stream, ident+1) for i in range(n)]
@@ -185,12 +186,22 @@ if __name__ == "__main__":
     assert test_avmap("A string")
     assert test_avmap([1, 2, 3])
     assert test_avmap(AVDict("Test", {"1":2, "Test":2, "Test2":[1, 2, 3]}))
-
+    
     root = "data"
     if os.path.exists(root):
         for n in os.listdir(root):
             print "Reading file: %s" % n
             with open(os.path.join(root, n)) as f:
                 pprint(loads(f.read()))
+    
+    #stream = dumps(['clientVersions'])
+    #data = []
+    #for i in stream:
+    #    if (i > 'a' and i < 'z') or (i > 'A' and i < 'Z'):
+    #        data += [i]
+    #    else:
+    #        data += "\\%x" % struct.unpack("b", i)
+    #print ''.join(data)
+
     
     #obj = AVDict("Teste", {"v1":1,"v3":[1, 2, 3, "Teste", [4, 5], AVDict("Teste2", {"1":3})]})

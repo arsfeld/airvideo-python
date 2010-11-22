@@ -1,14 +1,13 @@
-from struct import pack, unpack, calcsize
 import hashlib
-
 import json
+from struct import pack, unpack, calcsize
+from gzip import GzipFile
 
 read_and_unpack = lambda f, o: unpack(f, o.read(calcsize(f)))
 
 def filename_id(filename):
      id_hash = hashlib.md5(filename).hexdigest()
      return "%s-%s-%s-%s-%s"%(id_hash[0:8], id_hash[8:12], id_hash[12:16], id_hash[16:20], id_hash[20:])
-
 
 def singleton(cls):
     instance_container = []
@@ -24,7 +23,7 @@ def singleton(cls):
 
 def print_and_return(obj, ident):
     #if DEBUG:
-    #    print " "*2*ident + "%s" % obj
+    #print " "*2*ident + "%s" % obj
     return obj
 
 class AVEncoder(json.JSONEncoder):

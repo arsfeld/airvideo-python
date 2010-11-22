@@ -9,6 +9,14 @@ import re
 import random
 import json
 
+import cherrypy
+from gzip import GzipFile
+from wsgiref.simple_server import make_server
+#from flup.server.fcgi import WSGIServer
+#from threading import Thread
+#from socket import socket
+#from select import select
+
 import avmap
 import utils
 import media
@@ -17,6 +25,7 @@ import pygst
 pygst.require('0.10')
 import gst
 
+import SocketServer
 from BaseHTTPServer import BaseHTTPRequestHandler,HTTPServer
 from ConfigParser import SafeConfigParser
 from avmap import AVDict, AVObject
@@ -91,8 +100,8 @@ class VideoItem(Item):
                 folder = os.path.join(os.path.dirname(self._filename), folder)
             filenames = [os.path.join(folder, basename + '.m4v'),
                          os.path.join(folder, basename + '.mp4'),
-                         os.path.join(folder, basename + '-airvideo.m4v'),
-                         os.path.join(folder, basename + '-airvideo.mp4')]
+                         os.path.join(folder, basename + ' - airvideo.m4v'),
+                         os.path.join(folder, basename + ' - airvideo.mp4')]
             for filename in filenames:
                 if os.path.exists(filename):
                     return filename
@@ -242,15 +251,15 @@ class Config(object):
 def config():
     return Config()
 
+@utils.singleton
 class browseService(object):
-    def __init__(self, config):
-        self.config = config
+    def __init__(self):
         self.roots = {}
         self.items = {}
 
     def getItems(self, browseRequest = None):
         if not browseRequest['folderId']:
-            for root in self.config.get('folders'):
+            for root in config().get('folders'):
                 root = os.path.expanduser(root)
                 if root not in self.roots:
                     root_folder = DiskRootFolder(filename=root)
@@ -298,6 +307,10 @@ class browseService(object):
             items.append(root)
         return list(reversed(items))
         
+    def initPlayback(self, items):
+        pass
+        
+@utils.singleton
 class conversionService(object):
     def getConversionLocations(self):
         return [ConversionFolder(folderId = utils.filename_id(folder),
@@ -305,50 +318,89 @@ class conversionService(object):
                                  name = os.path.basename(folder)) 
                 for folder in config().get("convert_folders")]
 
-class Server(BaseHTTPRequestHandler):
+@utils.singleton
+class playbackService(object):
+    def initPlayback(self, items):
+        pass
 
+browse_service = browseService()
+conversion_service = conversionService()
+playbackService = playbackService()
+
+services = {'browseService': browse_service,
+            'conversionService': conversion_service,
+            'playbackService': playbackService}
+
+def process_request(request, outfile = None):
+    fakefile = outfile is None
+    if fakefile:
+        outfile = StringIO.StringIO()
+    print "Request:"
+    utils.pprint(request)
+    response = AVDict("air.connect.Response")
+    try:
+        service = services[request['serviceName']]
+        method = getattr(service, request['methodName'])
+    except AttributeError:
+        raise Exception()
+    response['errorMessage'] = None
+    response['errorReport'] = None
+    response['state'] = 0
+    try:
+        response['result'] = method(*request['parameters'])
+    except Exception as exp:
+        #Error is not working
+        #response['errorMessage'] = "%s: %s" % (type(exp), exp)
+        #response['errorReport'] = True
+        raise
+    print "Response:"
+    utils.pprint(avmap.loads(avmap.dumps(response)))
+    avmap.dump(response, outfile)
+    if fakefile:
+        return outfile.getvalue()
+
+class Server(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(404, 'What are you doing here?')
         
     def do_POST(self):
         request = avmap.load(self.rfile)
-        print "Request:"
-        utils.pprint(request)
-        response = AVDict("air.connect.Response")
-        try:
-            service = self.server.services[request['serviceName']]
-            method = getattr(service, request['methodName'])
-        except AttributeError:
-            self.send_response(404, "Service not found")
-            return
-        response['errorMessage'] = None
-        response['errorReport'] = None
-        response['state'] = 0
-        try:
-            response['result'] = method(*request['parameters'])
-            self.send_response(200, 'OK')
-        except Exception as exp:
-            response['errorMessage'] = "%s: %s" % (type(exp), exp)
-            response['errorReport'] = True
-            self.send_response(500, 'Error')
-            raise
-        print "Response:"
-        utils.pprint(avmap.loads(avmap.dumps(response)))
+        self.send_response(200, 'OK')
+        self.send_header("Content-Encoding", "gzip")
         self.end_headers()
-        avmap.dump(response, self.wfile)
+        outfile = GzipFile(fileobj=self.wfile, compresslevel=7)
+        process_request(request, outfile)
+        outfile.close()
 
+class ThreadedHTTPServer(SocketServer.ThreadingMixIn, HTTPServer):
+    pass
+
+
+def wsgi_server(self, environ, start_response):
+    start_response('200 OK', [('Content-type', 'avmap')])
+    request = avmap.load(environ['wsgi.input'])
+    return process_request(request)
+
+class CherryPyServer:
+    @cherrypy.expose
+    def service(self, data):
+        request = avmap.load(data)
+        return process_request(request)
+        
 class ServerThread(threading.Thread):
-    def __init__(self, config):
-        threading.Thread.__init__(self)
-        self.config = config
-
     def run(self):
         try:
             media.loader().start()
-            self.server = HTTPServer(('', 45632), Server)
-            self.server.config = self.config
-            self.server.services = {'browseService': browseService(self.config),
-                                    'conversionService': conversionService()}
+            
+            #app = wsgi_server
+            #server = make_server('', 45632, app)
+            #server.serve_forever()
+
+            #cherrypy.server.socket_port = 45632
+            #cherrypy.server.socket_host = '0.0.0.0'
+            #cherrypy.quickstart(CherryPyServer())
+            
+            self.server = ThreadedHTTPServer(('', 45632), Server)
             self.server.serve_forever()
         except KeyboardInterrupt:
             self.kill()
@@ -358,3 +410,11 @@ class ServerThread(threading.Thread):
         self.server.shutdown()
         media.loader().kill()
         
+def run():
+    server_thread = ServerThread()
+    server_thread.setDaemon(True)
+    server_thread.start()
+    return server_thread
+    
+if __name__ == "__main__":
+    run().join()

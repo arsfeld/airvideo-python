@@ -18,8 +18,7 @@ class AirVideoServer(dbus.service.Object):
         self.config = server.Config()
         
     def run(self):
-        server_thread = server.ServerThread(self.config)
-        server_thread.start()
+        server_thread = server.run()
         try:
             mainloop.run()
         except KeyboardInterrupt:

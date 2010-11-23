@@ -10,6 +10,8 @@ pygst.require('0.10')
 import gst
 from gst.extend import discoverer
 
+import gtk
+
 import utils
 
 def loader():
@@ -74,6 +76,82 @@ class Loader(threading.Thread):
             
     def kill(self):
         self.killed = True
+        
+def generate_thumbnail(filename):
+    print "Getting thumb for %s" % (filename)
+    CAPS = "video/x-raw-rgb,pixel-aspect-ratio=1/1,bpp=(int)24,"\
+           "depth=(int)24,endianness=(int)4321,red_mask=(int)0xff0000,"\
+           "green_mask=(int)0x00ff00, blue_mask=(int)0x0000ff"
+    pipeline_desc = "uridecodebin uri=\"file://%s\" ! ffmpegcolorspace ! videoscale !"\
+      " appsink name=sink caps=\"%s\"" % (filename, CAPS)
+    print pipeline_desc
+    pipeline = gst.parse_launch(pipeline_desc)
+    sink = pipeline.get_by_name("sink")
+
+    ret = pipeline.set_state(gst.STATE_PAUSED)
+    if ret == gst.STATE_CHANGE_FAILURE:
+        print "failed to play the file"
+        return None
+    elif ret == gst.STATE_CHANGE_NO_PREROLL:
+        # for live sources, we need to set the pipeline to PLAYING before we can
+        # receive a buffer. We don't do that yet 
+        print "live sources not supported yet"
+        return None
+    print gst.SECOND
+    ret = pipeline.get_state (5 * gst.SECOND)
+    
+    # get the duration
+    duration = pipeline.query_duration(gst.FORMAT_TIME)[0]
+
+    if duration != -1:
+        # we have a duration, seek to 5% 
+        position = duration * 5 / 100.0;
+    else:
+        # no duration, seek to 1 second, this could EOS 
+        position = 1 * gst.SECOND;
+
+    # seek to the a position in the file. Most files have a black first frame so
+    # by seeking to somewhere else we have a bigger chance of getting something
+    # more interesting. An optimisation would be to detect black images and then
+    # seek a little more 
+    pipeline.seek_simple(gst.FORMAT_TIME, gst.SEEK_FLAG_FLUSH, position);
+
+    # get the preroll buffer from appsink, this block untils appsink really
+    # prerolls */
+    buf = sink.emit("pull-preroll")
+    
+    # if we have a buffer now, convert it to a pixbuf. It's possible that we
+    # don't have a buffer because we went EOS right away or had an error. */
+    if buf:
+        # get the snapshot buffer format now. We set the caps on the appsink so
+        # that it can only be an rgb buffer. The only thing we have not specified
+        # on the caps is the height, which is dependant on the pixel-aspect-ratio
+        # of the source material
+        caps = buf.get_caps();
+        if not caps:
+            print "could not get snapshot format"
+            return None
+        s = caps[0];
+
+        # we need to get the final caps on the buffer to get the size 
+        width = s["width"];
+        height = s["height"];
+
+        # create pixmap from buffer and save, gstreamer video buffers have a stride
+        # that is rounded up to the nearest multiple of 4 
+        #print width * 3
+        #print width * 3 + (4 - (width * 3) % 4)
+        pixbuf = gtk.gdk.pixbuf_new_from_data(buf.data,
+            gtk.gdk.COLORSPACE_RGB, False, 8, width, height,
+            width * 3)
+        data = StringIO.StringIO()
+        pixbuf.save_to_callback(data.write, "jpeg", {"quality":"100"})
+        return data.get_value()
+        # save the pixbuf 
+        #pixbuf.save("snapshot.png", "png")
+    else:
+        print "could not make snapshot"
+        return None
         
 STREAM_PORT = 9990
 
@@ -164,12 +242,18 @@ def server(filename):
     return pipeline
 
 if __name__ == "__main__":
-    pipeline = server(sys.argv[1])
+    gobject.idle_add(generate_thumbnail)
     
+    
+    #from gstmanager.gstmanager import PipelineManager
+    #pipeline = PipelineManager(pipeline_desc)
+    #pipeline.pause()
+    #print pipeline.get_duration()
+    
+    #pipeline = server(sys.argv[1]) 
     # The MainLoop
     mainloop = gobject.MainLoop()
-
     # And off we go!
-    pipeline.set_state(gst.STATE_PLAYING)
+    #pipeline.set_state(gst.STATE_PLAYING)
     mainloop.run()
     

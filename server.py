@@ -77,9 +77,11 @@ class VideoItem(Item):
     def loadDetails(self, wait = False):
         if not self._loading:
             self._loading = True
+            print "Loading %s" % self._filename
             media.loader().load(self._filename, self.loadCallback)
-            if wait:
-                media.loader().wait(self._filename)
+            
+            #if wait:
+            #    media.loader().wait(self._filename)
 
     def getThumbnail(self):
         filename_md5 = hashlib.md5(os.path.abspath(self._filename)).hexdigest()
@@ -87,15 +89,22 @@ class VideoItem(Item):
         if not os.path.exists(thumbs_dir):
             os.makedirs(thumbs_dir)
         thumb_filename = os.path.join(thumbs_dir, filename_md5)
-        if not os.path.exists(thumb_filename):
-            subprocess.call(["/usr/bin/totem-video-thumbnailer", "-s", "256","--jpeg", self._filename, thumb_filename])
-        thumb_data = StringIO.StringIO()
         if os.path.exists(thumb_filename):
-            thumb_file = open(thumb_filename, "r")    
-            thumb_data.write(thumb_file.read())
-            thumb_data.seek(0)
-            thumb_file.close()
-        return thumb_data
+            with open(thumb_filename, 'r') as fp:
+                return fp.read()
+        #if not os.path.exists(thumb_filename):
+        #    subprocess.call(["/usr/bin/totem-video-thumbnailer", "-s", "256","--jpeg", self._filename, thumb_filename])
+        #thumb_data = StringIO.StringIO()
+        print "Thumb for %s"% self._filename
+        thumb_data = media.generate_thumbnail(self._filename)
+        with open(thumb_filename, "w") as fp:
+            fp.write(thumb_data)
+        #if os.path.exists(thumb_filename):
+        #    thumb_file = open(thumb_filename, "r")
+        #    thumb_data.write(thumb_file.read())
+        #    thumb_data.seek(0)
+        #    thumb_file.close()
+        return StringIO.StringIO(thumb_data)
 
     def findConverted(self):
         basename, ext = os.path.splitext(os.path.basename(self._filename))
@@ -437,11 +446,11 @@ class ServerThread(threading.Thread):
     def run(self):
         try:
             media.loader().start()
-            if cherrypy_available:
-                self.server = CherryPyServer
-            else:
-                self.server = WsgiServer
-            #self.server = ThreadedHTTPServer
+            #if cherrypy_available:
+            #    self.server = CherryPyServer
+            #else:
+            #self.server = WsgiServer
+            self.server = ThreadedHTTPServer
             self.server.run()
         except KeyboardInterrupt:
             self.kill()

@@ -2,6 +2,7 @@ import threading
 import sys
 import os
 import gobject
+import gtk
 
 from Queue import Queue
 
@@ -10,9 +11,9 @@ pygst.require('0.10')
 import gst
 from gst.extend import discoverer
 
-import gtk
-
 import utils
+
+gobject.threads_init()
 
 # Avoid importing gst in server.py
 SECOND = gst.SECOND
@@ -148,7 +149,7 @@ def generate_thumbnail(filename):
             gtk.gdk.COLORSPACE_RGB, False, 8, width, height,
             width * 3)
         data = StringIO.StringIO()
-        pixbuf.save_to_callback(data.write, "jpeg", {"quality":"100"})
+        pixbuf.save_to_callback(data.write, "jpeg", {"quality":"90"})
         return data.get_value()
         # save the pixbuf 
         #pixbuf.save("snapshot.png", "png")

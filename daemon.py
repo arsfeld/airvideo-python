@@ -9,7 +9,6 @@ import server
 DBusGMainLoop(set_as_default=True)
 
 mainloop = gobject.MainLoop()
-gobject.threads_init()
 
 class AirVideoServer(dbus.service.Object):
     def __init__(self):

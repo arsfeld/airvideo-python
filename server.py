@@ -9,38 +9,27 @@ import re
 import random
 import json
 
-cherrypy_available = False
-try:
-    import cherrypy
-    cherrypy_available = True
-except:
-    pass
 from gzip import GzipFile
 from wsgiref.simple_server import make_server
-#from flup.server.fcgi import WSGIServer
-#from threading import Thread
-#from socket import socket
-#from select import select
-
-import avmap
-import utils
-import media
-
-import pygst
-pygst.require('0.10')
-import gst
-
-import SocketServer
-from BaseHTTPServer import BaseHTTPRequestHandler,HTTPServer
-from ConfigParser import SafeConfigParser
-from avmap import AVDict, AVObject
 
 try:
     import cStringIO as StringIO
 except:
     import StringIO
 
-random.seed()
+cherrypy_available = False
+try:
+    import cherrypy
+    cherrypy_available = True
+except:
+    pass
+
+import avmap
+import utils
+import media
+
+from avmap import AVDict, AVObject
+
 
 class Item(AVObject):
     def __init__(self, filename, root = None, parent = None):
@@ -84,6 +73,7 @@ class VideoItem(Item):
             #    media.loader().wait(self._filename)
 
     def getThumbnail(self):
+        #TODO: Move thumbnail to media.py using GStreamer
         filename_md5 = hashlib.md5(os.path.abspath(self._filename)).hexdigest()
         thumbs_dir = os.path.join(os.path.expanduser("~"), '.cache', 'airvideo-python', 'thumbs')
         if not os.path.exists(thumbs_dir):
@@ -149,7 +139,7 @@ class VideoItem(Item):
             self.detail = MediaInfo(
                 fileSize = os.path.getsize(self._filename),
                 subtitles = [],
-                duration = float(d.videolength/gst.SECOND),
+                duration = float(d.videolength/media.SECOND),
                 bitrate = 0,
                 streams = streams,
                 videoThumbnail = self.getThumbnail(),

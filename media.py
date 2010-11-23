@@ -14,6 +14,9 @@ import gtk
 
 import utils
 
+# Avoid importing gst in server.py
+SECOND = gst.SECOND
+
 def loader():
     return Loader()
 
